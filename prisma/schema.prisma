@@ -1,0 +1,155 @@
+// Schema Prisma da Djunta Mon
+// Reflete o dominio do frontend (Professional, Category, Review, Booking)
+// e acrescenta User + RBAC + fluxo de aprovacao de profissionais.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Papel de acesso do utilizador. Controla o RBAC em toda a API.
+enum Role {
+  CLIENT
+  PROFESSIONAL
+  ADMIN
+}
+
+/// Estado do pedido de profissional. Apenas um ADMIN pode transicionar
+/// PENDING -> APPROVED/REJECTED, e APPROVED -> SUSPENDED.
+enum ProfessionalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  SUSPENDED
+}
+
+enum BookingStatus {
+  PENDENTE
+  CONFIRMADO
+  CONCLUIDO
+  CANCELADO
+}
+
+/// Conta de utilizador. Toda a autenticacao e autorizacao passa por aqui.
+model User {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         Role     @default(CLIENT)
+  phone        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  /// Perfil de profissional associado (se este utilizador se candidatou a ser um).
+  professional Professional?
+  reviews      Review[]
+  bookings     Booking[]
+
+  @@map("users")
+}
+
+/// Categorias de servico (Eletricista, Canalizador, ...). Escritas so por ADMIN.
+model Category {
+  id            String         @id
+  name          String
+  iconName      String
+  description   String
+  active        Boolean        @default(true)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  professionals Professional[]
+
+  @@map("categories")
+}
+
+/// Perfil publico de um profissional. Criado por um utilizador autenticado
+/// (auto-registo) mas so fica visivel publicamente ("active") depois de
+/// um ADMIN aprovar o pedido.
+model Professional {
+  id      String @id @default(uuid())
+  ownerId String @unique
+  owner   User   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  name       String
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  island        String
+  zone          String
+  phone         String
+  whatsapp      String
+  bio           String @db.Text
+  avatar        String
+  startingPrice Float
+  services      String[]
+  portfolio     String[]
+  availability  String
+
+  // --- Campos exclusivamente geridos pelo ADMIN (nunca expostos na escrita do dono) ---
+  status          ProfessionalStatus @default(PENDING)
+  rejectionReason String?
+  verified        Boolean            @default(false)
+  /// So true quando status = APPROVED. E o que decide se aparece nas pesquisas publicas.
+  active          Boolean            @default(false)
+  reviewedById    String?
+  reviewedAt      DateTime?
+
+  // --- Metricas calculadas a partir de Review/Booking ---
+  rating       Float @default(5.0)
+  reviewsCount Int   @default(0)
+  jobsCount    Int   @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  reviews  Review[]
+  bookings Booking[]
+
+  @@index([categoryId])
+  @@index([status])
+  @@index([island])
+  @@map("professionals")
+}
+
+/// Avaliacao de um cliente autenticado sobre um profissional.
+/// Exigir autenticacao (em vez do formulario anonimo do protótipo de frontend)
+/// evita reviews falsas/spam.
+model Review {
+  id             String   @id @default(uuid())
+  professionalId String
+  professional   Professional @relation(fields: [professionalId], references: [id], onDelete: Cascade)
+  authorId       String
+  author         User         @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  rating         Int
+  comment        String       @db.Text
+  createdAt      DateTime     @default(now())
+
+  @@unique([professionalId, authorId], name: "one_review_per_client")
+  @@index([professionalId])
+  @@map("reviews")
+}
+
+/// Pedido de agendamento de um servico feito por um cliente autenticado.
+model Booking {
+  id              String        @id @default(uuid())
+  professionalId  String
+  professional    Professional  @relation(fields: [professionalId], references: [id], onDelete: Cascade)
+  clientId        String
+  client          User          @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  serviceSelected String
+  date            String
+  timeSlot        String
+  details         String        @db.Text
+  status          BookingStatus @default(PENDENTE)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([professionalId])
+  @@index([clientId])
+  @@map("bookings")
+}

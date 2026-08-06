@@ -1,0 +1,22 @@
+import { PrismaClient } from "@prisma/client";
+import { isProduction } from "./env";
+
+/**
+ * Instancia unica do PrismaClient para todo o processo.
+ * Evita esgotar o pool de ligacoes do Postgres, que aconteceria
+ * se cada modulo criasse o seu proprio client (comum em hot-reload de dev).
+ */
+declare global {
+  // eslint-disable-next-line no-var
+  var __prisma: PrismaClient | undefined;
+}
+
+export const prisma =
+  global.__prisma ??
+  new PrismaClient({
+    log: isProduction ? ["error", "warn"] : ["error", "warn"],
+  });
+
+if (!isProduction) {
+  global.__prisma = prisma;
+}
